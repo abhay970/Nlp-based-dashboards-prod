@@ -6,6 +6,7 @@ Uses stored procedures instead of direct API calls.
 OPTIMIZED VERSION FOR FASTER RESPONSE TIMES
 All data sources now use the unified Dremio procedure.
 ENHANCED: Added timestamp conversion for Salesforce date fields
+IMPROVED: Better error handling for data availability
 """
 import json
 import time
@@ -392,6 +393,93 @@ def modify_salesforce_query(sql: str) -> str:
     return sql
 
 
+def is_data_availability_error(error_msg: str) -> bool:
+    """
+    Check if the error indicates data availability issues.
+    IMPROVED: Better pattern matching for various error types.
+    """
+    error_lower = error_msg.lower()
+    
+    # Data availability patterns
+    data_patterns = [
+        "unexpected data format",
+        "data not available",
+        "no data found",
+        "empty result set",
+        "result set is empty",
+        "no records found",
+        "table does not exist",
+        "view does not exist",
+        "object does not exist",
+        "invalid object name",
+        "cannot resolve table",
+        "table or view does not exist",
+        "schema does not exist",
+        "database does not exist"
+    ]
+    
+    # SQL syntax patterns that might indicate missing data structures
+    syntax_patterns = [
+        "syntax error",
+        "unexpected 'month'",
+        "unexpected 'year'",
+        "unexpected 'day'",
+        "invalid date",
+        "column does not exist",
+        "invalid column name",
+        "ambiguous column name",
+        "invalid identifier"
+    ]
+    
+    # Check for any pattern match
+    all_patterns = data_patterns + syntax_patterns
+    return any(pattern in error_lower for pattern in all_patterns)
+
+
+def format_user_friendly_error(error_msg: str, query_description: str = "") -> str:
+    """
+    Format error messages to be more user-friendly.
+    IMPROVED: Better error categorization and messaging.
+    """
+    if is_data_availability_error(error_msg):
+        return f"""
+🚫 **Data Not Available**
+
+I apologize, but the data you requested is not currently available in the system.
+
+**Your question:** {query_description if query_description else "The requested information"}
+
+**Possible reasons:**
+- The data hasn't been synchronized yet
+- The specific records don't exist for the requested time period
+- The data source might not contain this type of information
+- There may be a temporary connectivity issue
+
+**What you can try:**
+- Try a different time period or date range
+- Ask a similar question with different criteria
+- Contact your administrator for data availability
+
+**Need help?** Try asking:
+- "What data is available in this system?"
+- "Show me recent opportunities"
+- "What questions can I ask?"
+        """
+    else:
+        return f"""
+❌ **Unable to Process Request**
+
+I encountered an issue while processing your request.
+
+**Error details:** {error_msg}
+
+**What you can try:**
+- Rephrase your question
+- Try a simpler version of your query
+- Contact your administrator if the issue persists
+        """
+
+
 @st.cache_data(show_spinner=False, ttl=300)  # Cache for 5 minutes
 def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
@@ -399,6 +487,7 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
     OPTIMIZED: Added caching and better error messages.
     All data sources now use the unified Dremio procedure.
     ENHANCED: Added timestamp conversion for Salesforce data.
+    IMPROVED: Better error handling and user-friendly messages.
     """
     try:
         # All data sources use the same unified Dremio procedure
@@ -413,7 +502,27 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
         else:
             return None, f"❌ Unknown data source: {data_source}"
         
-        df = session.sql(procedure_call).to_pandas()
+        # Execute the procedure
+        result = session.sql(procedure_call)
+        df = result.to_pandas()
+        
+        # Check if the result contains error information
+        if df is not None and not df.empty:
+            # Check for error columns that might indicate issues
+            if 'ERROR' in df.columns:
+                error_row = df.iloc[0]
+                error_msg = str(error_row.get('ERROR', 'Unknown error'))
+                
+                # Use improved error handling
+                if is_data_availability_error(error_msg):
+                    return None, "DATA_NOT_AVAILABLE"
+                else:
+                    return None, f"❌ **Query Error:** {error_msg}"
+            
+            # Check for unexpected data format
+            if 'RECEIVED_TYPE' in df.columns or 'DATA' in df.columns:
+                # This indicates a data format issue
+                return None, "DATA_NOT_AVAILABLE"
         
         # Convert timestamps for Salesforce data
         if data_source == "Salesforce" and df is not None and not df.empty:
@@ -425,21 +534,14 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
         return df, None
         
     except SnowparkSQLException as e:
-        error_str = str(e).lower()
+        error_str = str(e)
         
-        # Check for specific error patterns that indicate missing data
-        if any(pattern in error_str for pattern in [
-            "syntax error", 
-            "unexpected 'month'", 
-            "unexpected 'year'",
-            "unexpected 'day'",
-            "invalid date",
-            "data not available"
-        ]):
-            return None, "⚠️ Data not available. Please contact your administrator."
-        elif "does not exist" in error_str:
-            error_msg = f"❌ **{data_source} Procedure Not Found**\n\nVerify the procedure exists and you have access."
-        elif "access denied" in error_str or "insufficient privileges" in error_str:
+        # Check if this is a data availability issue
+        if is_data_availability_error(error_str):
+            return None, "DATA_NOT_AVAILABLE"
+        elif "does not exist" in error_str.lower():
+            return None, "DATA_NOT_AVAILABLE"
+        elif "access denied" in error_str.lower() or "insufficient privileges" in error_str.lower():
             error_msg = f"❌ **Permission Denied**\n\nInsufficient privileges for {data_source} procedure."
         else:
             error_msg = f"❌ **{data_source} Error:** {str(e)}"
@@ -447,7 +549,13 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
         return None, error_msg
         
     except Exception as e:
-        return None, f"❌ **Unexpected Error:** {str(e)}"
+        error_str = str(e)
+        
+        # Check if this is a data availability issue
+        if is_data_availability_error(error_str):
+            return None, "DATA_NOT_AVAILABLE"
+        else:
+            return None, f"❌ **Unexpected Error:** {error_str}"
 
 
 def display_sql_confidence(confidence: dict):
@@ -475,6 +583,7 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
     """
     Display SQL query and execute it via appropriate data procedure.
     OPTIMIZED: Streamlined display and execution.
+    IMPROVED: Better error handling and user-friendly messages.
     """
     current_data_source = st.session_state.selected_yaml
     
@@ -495,26 +604,54 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
             df, err_msg = execute_data_procedure(sql, current_data_source)
             
             if df is None:
-                if "Data not available" in err_msg:
-                    st.warning("""
-                    ⚠️ **No Data Available**
+                if err_msg == "DATA_NOT_AVAILABLE":
+                    # Get the original user question from the last hidden message
+                    user_question = ""
+                    for msg in reversed(st.session_state.messages):
+                        if msg.get("hidden", False) and msg.get("role") == "user":
+                            user_question = msg["content"][0]["text"]
+                            break
                     
-                    The requested data is not available in the system. 
-                    This could be because:
-                    - The data hasn't been loaded yet
-                    - The time period you requested has no records
-                    - The specific records don't exist
-                    
-                    Please contact your administrator for assistance.
+                    st.warning(f"""
+🚫 **Data Not Available**
+
+I apologize, but the data you requested is not currently available in the system.
+
+**Your question:** {user_question}
+
+**Possible reasons:**
+- The data hasn't been synchronized yet
+- The specific records don't exist for the requested time period  
+- The data source might not contain this type of information
+- There may be a temporary connectivity issue
+
+**What you can try:**
+- Try a different time period or date range
+- Ask a similar question with different criteria
+- Contact your administrator for data availability
+
+**Need help?** Try asking:
+- "What data is available in this system?"
+- "Show me recent opportunities"  
+- "What questions can I ask?"
                     """)
                 else:
                     st.error(err_msg)
             elif df.empty:
-                st.warning("""
-                📭 **No Records Found**
-                
-                Your query executed successfully but returned no data.
-                Try adjusting your filters or time period.
+                st.info("""
+📭 **No Records Found**
+
+Your query executed successfully but returned no data.
+
+**This could mean:**
+- No records match your criteria
+- The time period specified has no data
+- The filters are too restrictive
+
+**Try adjusting:**
+- Date ranges or time periods
+- Filter criteria
+- Ask a broader question
                 """)
             else:
                 # Display results in tabs
