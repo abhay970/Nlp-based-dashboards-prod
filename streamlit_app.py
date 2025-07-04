@@ -117,7 +117,7 @@ def detect_and_convert_timestamps(df: pd.DataFrame) -> pd.DataFrame:
                         timestamp_ms = int(float(value))
                         if 1000000000000 <= timestamp_ms <= 4102444800000:  # Reasonable range
                             timestamp_s = timestamp_ms / 1000
-                            return datetime.fromtimestamp(timestamp_s).strftime('%Y-%m-%d)
+                            return datetime.fromtimestamp(timestamp_s).strftime('%Y-%m-%d')
                         else:
                             return value
                     except (ValueError, TypeError, OSError):
