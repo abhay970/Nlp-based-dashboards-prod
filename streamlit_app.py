@@ -392,6 +392,7 @@ def modify_salesforce_query(sql: str) -> str:
     return sql
 
 
+
 @st.cache_data(show_spinner=False, ttl=300)  # Cache for 5 minutes
 def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
@@ -477,64 +478,29 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
     except Exception as e:
         # Catch all other exceptions and return user-friendly message
         return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
-def display_sql_query(sql: str, message_index: int, confidence: dict):
-    """
-    Display SQL query and execute it via appropriate data procedure.
-    ENHANCED: Better error handling for user-friendly messages.
-    """
-    current_data_source = st.session_state.selected_yaml
-    
-    # Check if query needs modification
-    if current_data_source == "Salesforce":
-        modified_sql = modify_salesforce_query(sql)
-        query_was_modified = sql != modified_sql
-    else:
-        modified_sql = sql
-        query_was_modified = False
-
-    # Display confidence info if available
-    display_sql_confidence(confidence)
-
-    # Execute and display results
-    with st.expander("📊 Results", expanded=True):
-        with st.spinner(f"⚡ Executing via {current_data_source}..."):
-            df, err_msg = execute_data_procedure(sql, current_data_source)
+def display_sql_confidence(confidence: dict):
+    """Display SQL confidence information."""
+    if confidence is None:
+        return
+        
+    verified_query_used = confidence.get("verified_query_used")
+    with st.popover("🔍 Verified Query Info", help="Query verification details"):
+        if verified_query_used is None:
+            return
             
-            if df is None:
-                # Show user-friendly error message
-                if err_msg:
-                    st.warning(err_msg)
-                else:
-                    st.warning("⚠️ Data is not available right now. Please try again later or contact your administrator.")
-            elif df.empty:
-                st.warning("""
-                📭 **No Records Found**
-                
-                Your query executed successfully but returned no data.
-                Try adjusting your filters or time period.
-                """)
-            else:
-                # Additional check to make sure df is actually a DataFrame
-                if not isinstance(df, pd.DataFrame):
-                    st.warning("⚠️ Data is not available right now. Please try again later or contact your administrator.")
-                    return
-                
-                # Display results in tabs
-                data_tab, chart_tab = st.tabs(["📄 Data", "📈 Chart"])
-                
-                with data_tab:
-                    try:
-                        st.dataframe(df, use_container_width=True)
-                        st.caption(f"📊 {len(df)} rows returned")
-                    except Exception as display_error:
-                        st.warning("⚠️ Data is not available right now. Please try again later or contact your administrator.")
-                        return
+        st.write(f"**Name:** {verified_query_used.get('name', 'N/A')}")
+        st.write(f"**Question:** {verified_query_used.get('question', 'N/A')}")
+        st.write(f"**Verified by:** {verified_query_used.get('verified_by', 'N/A')}")
+        
+        if 'verified_at' in verified_query_used:
+            st.write(f"**Verified at:** {datetime.fromtimestamp(verified_query_used['verified_at'])}")
+        
+        with st.expander("SQL Query"):
+            st.code(verified_query_used.get("sql", "N/A"), language="sql")
 
-                with chart_tab:
-                    try:
-                        display_charts_tab(df, message_index)
-                    except Exception as chart_error:
-                        st.warning("⚠️ Chart display is not available right now. Please try again later.")
+
+
+
 def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
     """
     Display charts tab with improved performance.
