@@ -477,27 +477,6 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
     except Exception as e:
         # Catch all other exceptions and return user-friendly message
         return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
-def display_sql_confidence(confidence: dict):
-    """Display SQL confidence information."""
-    if confidence is None:
-        return
-        
-    verified_query_used = confidence.get("verified_query_used")
-    with st.popover("🔍 Verified Query Info", help="Query verification details"):
-        if verified_query_used is None:
-            return
-            
-        st.write(f"**Name:** {verified_query_used.get('name', 'N/A')}")
-        st.write(f"**Question:** {verified_query_used.get('question', 'N/A')}")
-        st.write(f"**Verified by:** {verified_query_used.get('verified_by', 'N/A')}")
-        
-        if 'verified_at' in verified_query_used:
-            st.write(f"**Verified at:** {datetime.fromtimestamp(verified_query_used['verified_at'])}")
-        
-        with st.expander("SQL Query"):
-            st.code(verified_query_used.get("sql", "N/A"), language="sql")
-
-
 def display_sql_query(sql: str, message_index: int, confidence: dict):
     """
     Display SQL query and execute it via appropriate data procedure.
