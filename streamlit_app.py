@@ -6,6 +6,7 @@ Uses stored procedures instead of direct API calls.
 OPTIMIZED VERSION FOR FASTER RESPONSE TIMES
 All data sources now use the unified Dremio procedure.
 ENHANCED: Added timestamp conversion for Salesforce date fields
+FIXED: Removed automatic "What questions can I ask?" to prevent unwanted credit consumption
 """
 import json
 import time
@@ -141,10 +142,8 @@ def main():
     
     show_header_and_sidebar()
     
-    # Show initial question only once
-    if len(st.session_state.messages) == 0 and st.session_state.selected_yaml and "initial_question_asked" not in st.session_state:
-        st.session_state.initial_question_asked = True
-        process_user_input("What questions can I ask?")
+    # REMOVED: Automatic initial question to prevent unwanted credit consumption
+    # The app now waits for user input before making any API calls
     
     display_conversation()
     handle_user_inputs()
@@ -156,8 +155,6 @@ def reset_session_state():
     st.session_state.messages = []
     st.session_state.active_suggestion = None
     st.session_state.warnings = []
-    if "initial_question_asked" in st.session_state:
-        del st.session_state.initial_question_asked
 
 
 def show_header_and_sidebar():
@@ -183,10 +180,19 @@ def show_header_and_sidebar():
             st.session_state.active_suggestion = None
             st.session_state.warnings = []
             st.session_state.selected_yaml = new_yaml_selection
-            if "initial_question_asked" in st.session_state:
-                del st.session_state.initial_question_asked
     
     st.info(f"📊 **{st.session_state.selected_yaml}** data source")
+    
+    # Add helpful message when no conversation has started
+    if len(st.session_state.messages) == 0:
+        st.markdown("""
+        💡 **Get started by asking questions like:**
+        - What questions can I ask?
+        - Show me recent sales data
+        - What are the top products?
+        - How many customers do we have?
+        """)
+    
     st.divider()
 
 
@@ -477,26 +483,6 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
     except Exception as e:
         # Catch all other exceptions and return user-friendly message
         return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
-
-# def display_sql_confidence(confidence: dict):
-#     """Display SQL confidence information."""
-#     if confidence is None:
-#         return
-        
-#     verified_query_used = confidence.get("verified_query_used")
-#     with st.popover("🔍 Verified Query Info", help="Query verification details"):
-#         if verified_query_used is None:
-#             return
-            
-#         st.write(f"**Name:** {verified_query_used.get('name', 'N/A')}")
-#         st.write(f"**Question:** {verified_query_used.get('question', 'N/A')}")
-#         st.write(f"**Verified by:** {verified_query_used.get('verified_by', 'N/A')}")
-        
-#         if 'verified_at' in verified_query_used:
-#             st.write(f"**Verified at:** {datetime.fromtimestamp(verified_query_used['verified_at'])}")
-        
-#         with st.expander("SQL Query"):
-#             st.code(verified_query_used.get("sql", "N/A"), language="sql")
 
 def display_sql_confidence(confidence: dict):
     """Display SQL confidence information."""
