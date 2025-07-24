@@ -578,14 +578,15 @@ def modify_salesforce_query(sql: str) -> str:
     return sql
 
 
-@st.cache_data(show_spinner=False, ttl=300)  # Cache for 5 minutes
+# Replace your execute_data_procedure function with this enhanced version:
+
+@st.cache_data(show_spinner=False, ttl=300)
 def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
-    Execute data procedure with caching and optimized error handling.
-    ENHANCED: Better error handling for user-friendly messages.
+    Execute data procedure with enhanced error handling and user guidance.
     """
     try:
-        # All data sources use the same unified Dremio procedure
+        # All data sources use the unified Dremio procedure
         if data_source == "Salesforce":
             modified_query = modify_salesforce_query(query)
             procedure_call = f"CALL SALESFORCE_DREMIO.SALESFORCE_SCHEMA_DREMIO.dremio_data_procedure('{modified_query}')"
@@ -598,39 +599,66 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
         
         # Execute the procedure
         result = session.sql(procedure_call)
-        
-        # Convert to pandas DataFrame
         df = result.to_pandas()
         
-        # Check if df is None or empty
-        if df is None:
-            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+        if df is None or df.empty:
+            return None, "📭 No data available. Try asking for specific records like 'show me 1000 products'."
         
-        # Check if the result is actually an error message (string) instead of DataFrame
-        if isinstance(df, str):
-            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+        # Check for error information in the DataFrame
+        if 'error' in df.columns:
+            first_row = df.iloc[0]
+            error_msg = first_row['error']
+            suggestion = first_row.get('suggestion', '')
+            tip = first_row.get('tip', '')
+            performance_tip = first_row.get('performance_tip', '')
+            
+            # Build comprehensive error message
+            full_message = f"⚠️ **{error_msg}**"
+            
+            if suggestion:
+                full_message += f"\n\n💡 **Try this:** {suggestion}"
+            
+            if tip:
+                full_message += f"\n\n🎯 **Tip:** {tip}"
+                
+            if performance_tip:
+                full_message += f"\n\n⚡ **Performance:** {performance_tip}"
+            
+            # Add helpful examples
+            full_message += """
+
+🔧 **Example questions that work well:**
+- "Show me first 5,000 products"
+- "Give me top 10,000 customers" 
+- "Display 1,000 recent orders"
+- "Show me 500 products from this year"
+            """
+            
+            return None, full_message
         
-        # Check if DataFrame is empty
-        if df.empty:
-            return None, "📭 No records found for your query. Please try with different criteria."
+        # Check for system info (auto-limiting messages)
+        system_info = None
+        if '_SYSTEM_INFO_' in df.columns:
+            system_info = df.iloc[0]['_SYSTEM_INFO_']
+            df = df.drop(columns=['_SYSTEM_INFO_'])
+            # Display system info as success message
+            st.info(f"ℹ️ **System Notice:** {system_info}")
         
-        # Check for error columns in the DataFrame (like ERROR, RECEIVED_TYPE, DATA columns in your image)
-        if 'ERROR' in df.columns or 'RECEIVED_TYPE' in df.columns:
-            # This means the procedure returned an error in DataFrame format
-            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
-        
-        # Check if the DataFrame contains error-like data
-        if len(df.columns) >= 3 and any(col.upper() in ['ERROR', 'RECEIVED_TYPE', 'DATA'] for col in df.columns):
-            # Check if the first row contains error information
-            first_row = df.iloc[0] if len(df) > 0 else None
-            if first_row is not None and any(str(val).lower().startswith('error') for val in first_row.values):
-                return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+        # Check for helpful messages
+        if 'message' in df.columns and len(df) == 1:
+            first_row = df.iloc[0]
+            message = first_row.get('message', '')
+            suggestion = first_row.get('suggestion', '')
+            
+            if 'no data returned' in message.lower():
+                msg = f"📭 **{message}**"
+                if suggestion:
+                    msg += f"\n\n💡 **Suggestion:** {suggestion}"
+                return None, msg
         
         # Convert timestamps for Salesforce data
         if data_source == "Salesforce" and df is not None and not df.empty:
-            # First, convert known date fields
             df = convert_salesforce_timestamps(df)
-            # Then, try to detect and convert other potential timestamp columns
             df = detect_and_convert_timestamps(df)
         
         return df, None
@@ -638,32 +666,52 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
     except SnowparkSQLException as e:
         error_str = str(e).lower()
         
-        # Enhanced error pattern matching
-        if any(pattern in error_str for pattern in [
-            "syntax error", 
-            "unexpected 'month'", 
-            "unexpected 'year'",
-            "unexpected 'day'",
-            "invalid date",
-            "data not available",
-            "unexpected data format",
-            "no data found",
-            "empty result",
-            "connection error",
-            "timeout"
-        ]):
-            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
-        elif "does not exist" in error_str:
-            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
-        elif "access denied" in error_str or "insufficient privileges" in error_str:
-            return None, "⚠️ Data is not available right now. Please contact your administrator for access."
+        if any(pattern in error_str for pattern in ["timeout", "timed out", "deadline exceeded"]):
+            return None, """
+⏱️ **Query Timeout - Dataset Too Large**
+
+Your query is processing too many records, causing a timeout.
+
+💡 **Quick Solutions:**
+1. **Add a number to your question**: "Show me first 10,000 products"
+2. **Be more specific**: "Show me products from last month"
+3. **Use filters**: "Show me expensive products"
+
+🎯 **Try these instead:**
+- ✅ "Give me top 5,000 product list"
+- ✅ "Show me 1,000 recent customers"
+- ✅ "Display first 2,000 orders"
+- ❌ "Give me all products" (too large)
+
+⚡ **Pro tip**: Start with smaller numbers, then increase as needed!
+            """
         else:
-            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+            return None, f"""
+⚠️ **Database Issue**
+
+There was a problem executing your query.
+
+💡 **Try this:**
+1. **Simplify your question**
+2. **Add a limit**: "Show me first 1,000 records"  
+3. **Be more specific** about what you need
+
+🔧 If the problem persists, contact your administrator.
+            """
             
     except Exception as e:
-        # Catch all other exceptions and return user-friendly message
-        return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+        return None, """
+⚠️ **System Error**
 
+An unexpected error occurred.
+
+💡 **Quick fixes:**
+1. **Refresh the page** and try again
+2. **Ask for fewer records**: "Show me first 1,000 products"
+3. **Use simpler questions**
+
+⚡ **Remember**: Large datasets work better with specific limits!
+        """
 
 def display_sql_confidence(confidence: dict):
     """Display SQL confidence information."""
