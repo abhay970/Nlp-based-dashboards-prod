@@ -682,7 +682,7 @@ def display_sql_confidence(confidence: dict):
 def display_sql_query(sql: str, message_index: int, confidence: dict):
     """
     Display SQL query and execute it with properly working pagination.
-    FIXED: Now properly uses sidebar default page size setting.
+    FIXED: Page size selection now works correctly.
     """
     current_data_source = st.session_state.selected_yaml
     query_key = f"query_{message_index}_{hash(sql)}"
@@ -724,25 +724,23 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
             
             total_records = len(df_full)
             
-            # Get current pagination state
+            # Determine if pagination is needed (show pagination for more than 25 records)
+            needs_pagination = total_records > 25
+            
+            # Get current pagination state AFTER potential updates from display_pagination_controls
+            if needs_pagination:
+                # Display pagination controls (this handles all state updates internally)
+                display_pagination_controls(query_key, total_records, st.session_state[f"page_size_{query_key}"], st.session_state[f"current_page_{query_key}"])
+            
+            # NOW get the updated values from session state
             current_page = st.session_state[f"current_page_{query_key}"]
             current_page_size = st.session_state[f"page_size_{query_key}"]
             
             # Show current settings info
             st.info(f"📊 **Dataset** - {total_records:,} records found. Page size: {current_page_size} (from {'sidebar default' if current_page_size == default_page_size else 'custom setting'})")
             
-            # Determine if pagination is needed (show pagination for more than 25 records)
-            needs_pagination = total_records > 25
-            
             if needs_pagination:
-                # Display pagination controls (this handles all state updates internally)
-                updated_page = display_pagination_controls(query_key, total_records, current_page_size, current_page)
-                
-                # Use the current state values (which may have been updated by the controls)
-                current_page = st.session_state[f"current_page_{query_key}"]
-                current_page_size = st.session_state[f"page_size_{query_key}"]
-                
-                # Calculate data slice
+                # Calculate data slice using the CURRENT page size (which may have been updated)
                 start_idx = (current_page - 1) * current_page_size
                 end_idx = min(start_idx + current_page_size, total_records)
                 df_to_display = df_full.iloc[start_idx:end_idx]
@@ -796,7 +794,6 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                 
                 if needs_pagination:
                     st.caption("📊 Chart shows data from current page only")
-
 
 
 def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
