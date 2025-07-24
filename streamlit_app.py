@@ -157,12 +157,7 @@ def split_dataframe(input_df: pd.DataFrame, rows: int) -> List[pd.DataFrame]:
 def display_pagination_controls(query_key: str, total_records: int, page_size: int, current_page: int):
     """
     Display improved pagination controls with better UX design.
-    
-    Args:
-        query_key (str): Unique key for this query
-        total_records (int): Total number of records
-        page_size (int): Records per page
-        current_page (int): Current page number
+    FIXED: Proper state management and return values.
     """
     total_pages = math.ceil(total_records / page_size) if total_records > 0 else 1
     
@@ -171,24 +166,6 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
     
     # Create a well-designed pagination container
     with st.container():
-        # Create a bordered container with better styling
-        st.markdown("""
-        <style>
-        .pagination-container {
-            background-color: #f8f9fa;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 16px;
-            margin: 8px 0;
-        }
-        .pagination-info {
-            color: #6c757d;
-            font-size: 14px;
-            margin-bottom: 12px;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
         # Info section with better formatting
         info_col, settings_col = st.columns([3, 1])
         
@@ -203,14 +180,15 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
         
         with settings_col:
             # Page size selector with better UX
+            current_page_size = st.session_state.get(f"page_size_{query_key}", page_size)
             new_page_size = st.selectbox(
                 "📄 Per Page", 
                 options=[25, 50, 100, 200, 500, 1000],
-                index=[25, 50, 100, 200, 500, 1000].index(page_size) if page_size in [25, 50, 100, 200, 500, 1000] else 2,
-                key=f"page_size_{query_key}",
+                index=[25, 50, 100, 200, 500, 1000].index(current_page_size) if current_page_size in [25, 50, 100, 200, 500, 1000] else 2,
+                key=f"page_size_selector_{query_key}",
                 help="Number of records to show per page"
             )
-            if new_page_size != page_size:
+            if new_page_size != current_page_size:
                 st.session_state[f"page_size_{query_key}"] = new_page_size
                 st.session_state[f"current_page_{query_key}"] = 1  # Reset to first page
                 st.rerun()
@@ -223,12 +201,14 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
         with nav_col1:
             # First page button
             if st.button("⏮️ First", key=f"first_{query_key}", disabled=current_page <= 1, help="Go to first page"):
-                return 1
+                st.session_state[f"current_page_{query_key}"] = 1
+                st.rerun()
         
         with nav_col2:
             # Previous page button
             if st.button("⬅️ Prev", key=f"prev_{query_key}", disabled=current_page <= 1, help="Go to previous page"):
-                return current_page - 1
+                st.session_state[f"current_page_{query_key}"] = current_page - 1
+                st.rerun()
         
         with nav_col3:
             # Page number input with better styling
@@ -241,17 +221,20 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
                 help=f"Enter page number (1-{total_pages})"
             )
             if new_page != current_page:
-                return new_page
+                st.session_state[f"current_page_{query_key}"] = new_page
+                st.rerun()
         
         with nav_col4:
             # Next page button
             if st.button("➡️ Next", key=f"next_{query_key}", disabled=current_page >= total_pages, help="Go to next page"):
-                return current_page + 1
+                st.session_state[f"current_page_{query_key}"] = current_page + 1
+                st.rerun()
         
         with nav_col5:
             # Last page button
             if st.button("⏭️ Last", key=f"last_{query_key}", disabled=current_page >= total_pages, help="Go to last page"):
-                return total_pages
+                st.session_state[f"current_page_{query_key}"] = total_pages
+                st.rerun()
         
         # Progress bar to show current position
         progress_value = current_page / total_pages
@@ -290,10 +273,10 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
                             disabled=is_current,
                             help=f"Jump to page {page_num}"
                         ):
-                            return page_num
+                            st.session_state[f"current_page_{query_key}"] = page_num
+                            st.rerun()
     
     return current_page
-
 
 def main():
     # Initialize session state
@@ -675,11 +658,19 @@ def display_sql_confidence(confidence: dict):
 def display_sql_query(sql: str, message_index: int, confidence: dict):
     """
     Display SQL query and execute it via appropriate data procedure with pagination support.
-    ENHANCED: Added pagination, better error handling, and improved data display.
+    ENHANCED: Fixed pagination initialization and state management.
     """
     current_data_source = st.session_state.selected_yaml
     query_key = f"query_{message_index}_{hash(sql)}"
-    page_size = st.session_state.get('page_size_setting', DEFAULT_PAGE_SIZE)
+    
+    # Initialize pagination state properly
+    if f"page_size_{query_key}" not in st.session_state:
+        st.session_state[f"page_size_{query_key}"] = st.session_state.get('page_size_setting', DEFAULT_PAGE_SIZE)
+    
+    if f"current_page_{query_key}" not in st.session_state:
+        st.session_state[f"current_page_{query_key}"] = 1
+    
+    page_size = st.session_state[f"page_size_{query_key}"]
     
     # Check if query needs modification
     if current_data_source == "Salesforce":
@@ -719,42 +710,38 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                     return
                 
                 total_records = len(df_full)
-                st.session_state.total_records[query_key] = total_records
+                st.session_state[f"total_records_{query_key}"] = total_records
                 
-                # Determine if pagination is needed
-                needs_pagination = total_records > LARGE_DATASET_THRESHOLD
+                # Always show pagination controls if more than 25 records
+                needs_pagination = total_records > 25
                 
                 if needs_pagination:
                     # Better messaging for large datasets
-                    st.info(f"📊 **Large Dataset Detected** - {total_records:,} records found. Using pagination for optimal performance and faster loading.")
+                    st.info(f"📊 **Dataset** - {total_records:,} records found. Using pagination for optimal performance.")
                     
-                    # Get or initialize current page
-                    current_page = st.session_state.get(f"current_page_{query_key}", 1)
-                    
-                    # Get custom page size if set
-                    custom_page_size = st.session_state.get(f"page_size_{query_key}", page_size)
+                    # Get current page and page size from session state
+                    current_page = st.session_state[f"current_page_{query_key}"]
+                    current_page_size = st.session_state[f"page_size_{query_key}"]
                     
                     # Display improved pagination controls
-                    new_page = display_pagination_controls(query_key, total_records, custom_page_size, current_page)
+                    new_page = display_pagination_controls(query_key, total_records, current_page_size, current_page)
                     
+                    # Update page if changed
                     if new_page != current_page:
                         st.session_state[f"current_page_{query_key}"] = new_page
                         st.rerun()
                     
-                    # Split dataframe into pages
-                    pages = split_dataframe(df_full, custom_page_size)
+                    # Calculate start and end indices for current page
+                    start_idx = (current_page - 1) * current_page_size
+                    end_idx = min(start_idx + current_page_size, total_records)
                     
-                    # Get current page data (handle edge cases)
-                    if current_page <= len(pages):
-                        df_to_display = pages[current_page - 1]
-                    else:
-                        df_to_display = pages[-1] if pages else pd.DataFrame()
-                        st.session_state[f"current_page_{query_key}"] = len(pages)
+                    # Get current page data
+                    df_to_display = df_full.iloc[start_idx:end_idx]
                         
                 else:
-                    # For small datasets, show all data with a nice message
+                    # For small datasets, show all data
                     df_to_display = df_full
-                    custom_page_size = page_size
+                    current_page_size = total_records
                     st.success(f"✅ **Complete Dataset** - Showing all {total_records:,} records")
                 
                 # Display results in tabs
@@ -780,8 +767,8 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                         
                         # Better status information
                         if needs_pagination:
-                            current_page = st.session_state.get(f"current_page_{query_key}", 1)
-                            start_record = (current_page - 1) * custom_page_size + 1
+                            current_page = st.session_state[f"current_page_{query_key}"]
+                            start_record = (current_page - 1) * current_page_size + 1
                             end_record = min(start_record + len(df_to_display) - 1, total_records)
                             
                             # Status bar with better formatting
@@ -816,7 +803,6 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                             
                     except Exception as chart_error:
                         st.warning("⚠️ Chart display is not available right now. Please try again later.")
-
 
 def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
     """
