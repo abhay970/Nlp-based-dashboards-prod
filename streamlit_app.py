@@ -156,13 +156,17 @@ def split_dataframe(input_df: pd.DataFrame, rows: int) -> List[pd.DataFrame]:
 
 def display_pagination_controls(query_key: str, total_records: int, page_size: int, current_page: int):
     """
-    Display improved pagination controls with better UX design.
-    FIXED: Proper state management and return values.
+    Display improved pagination controls with proper state updates.
+    FIXED: Proper state management and immediate updates.
     """
     total_pages = math.ceil(total_records / page_size) if total_records > 0 else 1
     
     if total_pages <= 1:
         return current_page
+    
+    # Track if any changes occurred
+    state_changed = False
+    new_page = current_page
     
     # Create a well-designed pagination container
     with st.container():
@@ -179,7 +183,7 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
             """)
         
         with settings_col:
-            # Page size selector with better UX
+            # Page size selector with immediate effect
             current_page_size = st.session_state.get(f"page_size_{query_key}", page_size)
             new_page_size = st.selectbox(
                 "📄 Per Page", 
@@ -188,6 +192,8 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
                 key=f"page_size_selector_{query_key}",
                 help="Number of records to show per page"
             )
+            
+            # Handle page size change
             if new_page_size != current_page_size:
                 st.session_state[f"page_size_{query_key}"] = new_page_size
                 st.session_state[f"current_page_{query_key}"] = 1  # Reset to first page
@@ -195,24 +201,24 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
         
         st.divider()
         
-        # Navigation controls with better layout and icons
+        # Navigation controls
         nav_col1, nav_col2, nav_col3, nav_col4, nav_col5 = st.columns([1, 1, 2, 1, 1])
         
         with nav_col1:
             # First page button
             if st.button("⏮️ First", key=f"first_{query_key}", disabled=current_page <= 1, help="Go to first page"):
-                st.session_state[f"current_page_{query_key}"] = 1
-                st.rerun()
+                new_page = 1
+                state_changed = True
         
         with nav_col2:
             # Previous page button
             if st.button("⬅️ Prev", key=f"prev_{query_key}", disabled=current_page <= 1, help="Go to previous page"):
-                st.session_state[f"current_page_{query_key}"] = current_page - 1
-                st.rerun()
+                new_page = current_page - 1
+                state_changed = True
         
         with nav_col3:
-            # Page number input with better styling
-            new_page = st.number_input(
+            # Page number input
+            page_input = st.number_input(
                 "🔢 Jump to page",
                 min_value=1,
                 max_value=total_pages,
@@ -220,23 +226,23 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
                 key=f"page_input_{query_key}",
                 help=f"Enter page number (1-{total_pages})"
             )
-            if new_page != current_page:
-                st.session_state[f"current_page_{query_key}"] = new_page
-                st.rerun()
+            if page_input != current_page:
+                new_page = page_input
+                state_changed = True
         
         with nav_col4:
             # Next page button
             if st.button("➡️ Next", key=f"next_{query_key}", disabled=current_page >= total_pages, help="Go to next page"):
-                st.session_state[f"current_page_{query_key}"] = current_page + 1
-                st.rerun()
+                new_page = current_page + 1
+                state_changed = True
         
         with nav_col5:
             # Last page button
             if st.button("⏭️ Last", key=f"last_{query_key}", disabled=current_page >= total_pages, help="Go to last page"):
-                st.session_state[f"current_page_{query_key}"] = total_pages
-                st.rerun()
+                new_page = total_pages
+                state_changed = True
         
-        # Progress bar to show current position
+        # Progress bar
         progress_value = current_page / total_pages
         st.progress(progress_value, text=f"Page {current_page} of {total_pages}")
         
@@ -245,24 +251,22 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
             st.markdown("**Quick Jump:**")
             quick_jump_cols = st.columns(min(5, total_pages))
             
-            # Show strategic page numbers for quick access
+            # Show strategic page numbers
             quick_pages = []
             if total_pages <= 5:
                 quick_pages = list(range(1, total_pages + 1))
             else:
-                # Show first, some middle pages, and last
                 quick_pages = [1]
                 if total_pages > 20:
-                    step = total_pages // 4
+                    step = max(1, total_pages // 4)
                     quick_pages.extend([step, step * 2, step * 3])
                 elif total_pages > 10:
                     mid = total_pages // 2
-                    quick_pages.extend([mid - 1, mid, mid + 1])
+                    quick_pages.extend([max(1, mid - 1), mid, min(total_pages, mid + 1)])
                 quick_pages.append(total_pages)
-                # Remove duplicates and sort
                 quick_pages = sorted(list(set(quick_pages)))
             
-            for i, page_num in enumerate(quick_pages[:5]):  # Limit to 5 quick jump buttons
+            for i, page_num in enumerate(quick_pages[:5]):
                 if i < len(quick_jump_cols):
                     with quick_jump_cols[i]:
                         is_current = page_num == current_page
@@ -273,10 +277,15 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
                             disabled=is_current,
                             help=f"Jump to page {page_num}"
                         ):
-                            st.session_state[f"current_page_{query_key}"] = page_num
-                            st.rerun()
+                            new_page = page_num
+                            state_changed = True
     
-    return current_page
+    # Update state if changed
+    if state_changed and new_page != current_page:
+        st.session_state[f"current_page_{query_key}"] = new_page
+        st.rerun()
+    
+    return new_page if state_changed else current_page
 
 def main():
     # Initialize session state
@@ -657,28 +666,24 @@ def display_sql_confidence(confidence: dict):
 
 def display_sql_query(sql: str, message_index: int, confidence: dict):
     """
-    Display SQL query and execute it via appropriate data procedure with pagination support.
-    ENHANCED: Fixed pagination initialization and state management.
+    Display SQL query and execute it with properly working pagination.
+    FIXED: Proper pagination state management and data display.
     """
     current_data_source = st.session_state.selected_yaml
     query_key = f"query_{message_index}_{hash(sql)}"
     
-    # Initialize pagination state properly
+    # Initialize pagination state if not exists
     if f"page_size_{query_key}" not in st.session_state:
         st.session_state[f"page_size_{query_key}"] = st.session_state.get('page_size_setting', DEFAULT_PAGE_SIZE)
     
     if f"current_page_{query_key}" not in st.session_state:
         st.session_state[f"current_page_{query_key}"] = 1
     
-    page_size = st.session_state[f"page_size_{query_key}"]
-    
     # Check if query needs modification
     if current_data_source == "Salesforce":
         modified_sql = modify_salesforce_query(sql)
-        query_was_modified = sql != modified_sql
     else:
         modified_sql = sql
-        query_was_modified = False
 
     # Display confidence info if available
     display_sql_confidence(confidence)
@@ -688,126 +693,94 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
         with st.spinner(f"⚡ Executing via {current_data_source}..."):
             df_full, err_msg = execute_data_procedure(sql, current_data_source)
             
-            if df_full is None:
-                # Show user-friendly error message
+            if df_full is None or not isinstance(df_full, pd.DataFrame):
                 if err_msg:
                     st.warning(err_msg)
                 else:
                     st.warning("⚠️ Data is not available right now. Please try again later or contact your administrator.")
                 return
-            elif df_full.empty:
-                st.warning("""
-                📭 **No Records Found**
                 
-                Your query executed successfully but returned no data.
-                Try adjusting your filters or time period.
-                """)
+            if df_full.empty:
+                st.warning("📭 **No Records Found** - Your query executed successfully but returned no data.")
                 return
+            
+            total_records = len(df_full)
+            
+            # Get current pagination state
+            current_page = st.session_state[f"current_page_{query_key}"]
+            current_page_size = st.session_state[f"page_size_{query_key}"]
+            
+            # Determine if pagination is needed
+            needs_pagination = total_records > 25
+            
+            if needs_pagination:
+                st.info(f"📊 **Dataset** - {total_records:,} records found. Using pagination for optimal performance.")
+                
+                # Display pagination controls (this handles all state updates internally)
+                updated_page = display_pagination_controls(query_key, total_records, current_page_size, current_page)
+                
+                # Use the current state values (which may have been updated by the controls)
+                current_page = st.session_state[f"current_page_{query_key}"]
+                current_page_size = st.session_state[f"page_size_{query_key}"]
+                
+                # Calculate data slice
+                start_idx = (current_page - 1) * current_page_size
+                end_idx = min(start_idx + current_page_size, total_records)
+                df_to_display = df_full.iloc[start_idx:end_idx]
+                
             else:
-                # Additional check to make sure df is actually a DataFrame
-                if not isinstance(df_full, pd.DataFrame):
-                    st.warning("⚠️ Data is not available right now. Please try again later or contact your administrator.")
-                    return
+                df_to_display = df_full
+                st.success(f"✅ **Complete Dataset** - Showing all {total_records:,} records")
+            
+            # Display results in tabs
+            data_tab, chart_tab = st.tabs(["📄 Data", "📈 Chart"])
+            
+            with data_tab:
+                # Export options
+                if needs_pagination:
+                    export_col1, export_col2 = st.columns([3, 1])
+                    with export_col2:
+                        csv = df_to_display.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download Current Page CSV",
+                            data=csv,
+                            file_name=f"data_page_{current_page}.csv",
+                            mime="text/csv",
+                            key=f"csv_download_{query_key}"
+                        )
                 
-                total_records = len(df_full)
-                st.session_state[f"total_records_{query_key}"] = total_records
+                # Display data
+                st.dataframe(df_to_display, use_container_width=True, height=400)
                 
-                # Always show pagination controls if more than 25 records
-                needs_pagination = total_records > 25
+                # Status information
+                if needs_pagination:
+                    status_col1, status_col2, status_col3 = st.columns(3)
+                    with status_col1:
+                        st.metric("📄 Current Page", f"{current_page:,}")
+                    with status_col2:
+                        st.metric("📊 Records Shown", f"{len(df_to_display):,}")
+                    with status_col3:
+                        st.metric("🗂️ Total Records", f"{total_records:,}")
+                else:
+                    st.caption(f"📊 {len(df_to_display)} rows returned")
+
+            with chart_tab:
+                # Use current page data for charting
+                chart_data = df_to_display
+                
+                # For very large pages, sample the data
+                if len(chart_data) > 1000:
+                    chart_data = chart_data.sample(n=1000, random_state=42)
+                    st.info("📈 Chart shows a random sample of 1,000 records from current page for performance.")
+                
+                display_charts_tab(chart_data, message_index)
                 
                 if needs_pagination:
-                    # Better messaging for large datasets
-                    st.info(f"📊 **Dataset** - {total_records:,} records found. Using pagination for optimal performance.")
-                    
-                    # Get current page and page size from session state
-                    current_page = st.session_state[f"current_page_{query_key}"]
-                    current_page_size = st.session_state[f"page_size_{query_key}"]
-                    
-                    # Display improved pagination controls
-                    new_page = display_pagination_controls(query_key, total_records, current_page_size, current_page)
-                    
-                    # Update page if changed
-                    if new_page != current_page:
-                        st.session_state[f"current_page_{query_key}"] = new_page
-                        st.rerun()
-                    
-                    # Calculate start and end indices for current page
-                    start_idx = (current_page - 1) * current_page_size
-                    end_idx = min(start_idx + current_page_size, total_records)
-                    
-                    # Get current page data
-                    df_to_display = df_full.iloc[start_idx:end_idx]
-                        
-                else:
-                    # For small datasets, show all data
-                    df_to_display = df_full
-                    current_page_size = total_records
-                    st.success(f"✅ **Complete Dataset** - Showing all {total_records:,} records")
-                
-                # Display results in tabs
-                data_tab, chart_tab = st.tabs(["📄 Data", "📈 Chart"])
-                
-                with data_tab:
-                    # Add export options for better UX
-                    if needs_pagination:
-                        export_col1, export_col2 = st.columns([3, 1])
-                        with export_col2:
-                            if st.button("📥 Download Current Page", key=f"download_{query_key}"):
-                                csv = df_to_display.to_csv(index=False)
-                                st.download_button(
-                                    label="💾 Download as CSV",
-                                    data=csv,
-                                    file_name=f"data_page_{current_page}.csv",
-                                    mime="text/csv",
-                                    key=f"csv_download_{query_key}"
-                                )
-                    
-                    try:
-                        st.dataframe(df_to_display, use_container_width=True, height=400)
-                        
-                        # Better status information
-                        if needs_pagination:
-                            current_page = st.session_state[f"current_page_{query_key}"]
-                            start_record = (current_page - 1) * current_page_size + 1
-                            end_record = min(start_record + len(df_to_display) - 1, total_records)
-                            
-                            # Status bar with better formatting
-                            status_col1, status_col2, status_col3 = st.columns(3)
-                            with status_col1:
-                                st.metric("📄 Current Page", f"{current_page:,}")
-                            with status_col2:
-                                st.metric("📊 Records Shown", f"{len(df_to_display):,}")
-                            with status_col3:
-                                st.metric("🗂️ Total Records", f"{total_records:,}")
-                        else:
-                            st.caption(f"📊 {len(df_to_display)} rows returned")
-                            
-                    except Exception as display_error:
-                        st.warning("⚠️ Data is not available right now. Please try again later or contact your administrator.")
-                        return
-
-                with chart_tab:
-                    try:
-                        # For charting, use a sample of data to avoid memory issues
-                        chart_data = df_to_display
-                        
-                        # If the current page is too large for charting, take a sample
-                        if len(chart_data) > 1000:
-                            chart_data = chart_data.sample(n=1000, random_state=42)
-                            st.info("📈 Chart shows a random sample of 1,000 records from current page for performance.")
-                        
-                        display_charts_tab(chart_data, message_index)
-                        
-                        if needs_pagination:
-                            st.caption("📊 Chart shows data from current page only")
-                            
-                    except Exception as chart_error:
-                        st.warning("⚠️ Chart display is not available right now. Please try again later.")
-
+                    st.caption("📊 Chart shows data from current page only")
 def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
     """
-    Display charts tab with improved performance and aggregation options.
-    ENHANCED: Added aggregation methods and better chart handling from Code 1.
+    Display charts tab with real-time aggregation updates.
+    FIXED: Charts now update immediately when aggregation method changes.
     """
     if len(df.columns) < 2:
         st.info("📊 At least 2 columns required for charts")
@@ -816,8 +789,11 @@ def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
     all_cols_set = set(df.columns)
     col1, col2 = st.columns(2)
     
+    # Column selectors
     x_col = col1.selectbox(
-        "X axis", all_cols_set, key=f"x_col_select_{message_index}"
+        "X axis", 
+        all_cols_set, 
+        key=f"x_col_select_{message_index}"
     )
     y_col = col2.selectbox(
         "Y axis",
@@ -825,12 +801,12 @@ def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
         key=f"y_col_select_{message_index}",
     )
     
-    # Add aggregation method selector
+    # Aggregation and chart type selectors
     col3, col4 = st.columns(2)
     aggregation_method = col3.selectbox(
         "Aggregation Method",
         options=["sum", "average", "count", "max", "min"],
-        index=0,  # Default to "sum"
+        index=0,
         key=f"agg_method_{message_index}",
         help="Choose how to aggregate duplicate x-axis values"
     )
@@ -841,82 +817,121 @@ def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
         key=f"chart_type_{message_index}",
     )
     
-    try:
-        # Clean the data for charting
-        chart_df = df[[x_col, y_col]].dropna()
-        
-        # For numeric y-axis, ensure it's numeric (except for count aggregation)
-        if aggregation_method != "count" and chart_df[y_col].dtype == 'object':
-            try:
-                chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors='coerce')
-                chart_df = chart_df.dropna()
-            except:
-                st.warning(f"Could not convert {y_col} to numeric values for charting")
-                return
-        
-        if len(chart_df) == 0:
-            st.warning("No valid data available for charting after cleaning")
-            return
-        
-        # Track if aggregation was applied
-        aggregation_applied = False
-        
-        # Group by x-axis if there are duplicate values (aggregate)
-        if chart_df[x_col].duplicated().any():
-            aggregation_applied = True
-            if aggregation_method == "sum":
-                if pd.api.types.is_numeric_dtype(chart_df[y_col]):
-                    chart_df = chart_df.groupby(x_col)[y_col].sum().reset_index()
-                else:
-                    st.warning(f"Cannot sum non-numeric values in {y_col}. Using first occurrence instead.")
-                    chart_df = chart_df.drop_duplicates(subset=[x_col])
-                    aggregation_applied = False
-            elif aggregation_method == "average":
-                if pd.api.types.is_numeric_dtype(chart_df[y_col]):
-                    chart_df = chart_df.groupby(x_col)[y_col].mean().reset_index()
-                else:
-                    st.warning(f"Cannot average non-numeric values in {y_col}. Using first occurrence instead.")
-                    chart_df = chart_df.drop_duplicates(subset=[x_col])
-                    aggregation_applied = False
-            elif aggregation_method == "count":
-                chart_df = chart_df.groupby(x_col)[y_col].count().reset_index()
-            elif aggregation_method == "max":
-                if pd.api.types.is_numeric_dtype(chart_df[y_col]):
-                    chart_df = chart_df.groupby(x_col)[y_col].max().reset_index()
-                else:
-                    st.warning(f"Cannot find max of non-numeric values in {y_col}. Using first occurrence instead.")
-                    chart_df = chart_df.drop_duplicates(subset=[x_col])
-                    aggregation_applied = False
-            elif aggregation_method == "min":
-                if pd.api.types.is_numeric_dtype(chart_df[y_col]):
-                    chart_df = chart_df.groupby(x_col)[y_col].min().reset_index()
-                else:
-                    st.warning(f"Cannot find min of non-numeric values in {y_col}. Using first occurrence instead.")
-                    chart_df = chart_df.drop_duplicates(subset=[x_col])
-                    aggregation_applied = False
-        
-        # Limit chart data points for performance
-        if len(chart_df) > 100:
-            chart_df = chart_df.head(100)
-            st.info("Chart limited to first 100 data points for performance")
-        
-        if chart_type == "Line Chart 📈":
-            st.line_chart(chart_df.set_index(x_col)[y_col])
-        elif chart_type == "Bar Chart 📊":
-            st.bar_chart(chart_df.set_index(x_col)[y_col])
-        
-        # Display caption indicating aggregation method used
-        if aggregation_applied:
-            if aggregation_method == "average":
-                st.caption(f"📊 Chart shows **{aggregation_method}** of {y_col} values grouped by {x_col}")
-            else:
-                st.caption(f"📊 Chart shows **{aggregation_method}** of {y_col} values grouped by {x_col}")
-        else:
-            st.caption(f"📊 Chart shows {y_col} vs {x_col} (no aggregation needed)")
+    # Create a container for the chart that updates when selections change
+    chart_container = st.container()
+    
+    with chart_container:
+        try:
+            # Clean the data for charting
+            chart_df = df[[x_col, y_col]].dropna().copy()
             
-    except Exception as e:
-        st.error(f"Error creating chart: {str(e)}")
-        st.write("Please try selecting different columns or check your data format.")
+            if len(chart_df) == 0:
+                st.warning("No valid data available for charting after cleaning")
+                return
+            
+            # Track if aggregation was applied
+            aggregation_applied = False
+            original_rows = len(chart_df)
+            
+            # Check if we need to aggregate (duplicate x values)
+            if chart_df[x_col].duplicated().any():
+                aggregation_applied = True
+                
+                if aggregation_method == "sum":
+                    if pd.api.types.is_numeric_dtype(chart_df[y_col]):
+                        chart_df = chart_df.groupby(x_col)[y_col].sum().reset_index()
+                    else:
+                        st.warning(f"Cannot sum non-numeric values in {y_col}. Using count instead.")
+                        chart_df = chart_df.groupby(x_col)[y_col].count().reset_index()
+                        aggregation_method = "count"
+                        
+                elif aggregation_method == "average":
+                    if pd.api.types.is_numeric_dtype(chart_df[y_col]):
+                        chart_df = chart_df.groupby(x_col)[y_col].mean().reset_index()
+                    else:
+                        st.warning(f"Cannot average non-numeric values in {y_col}. Using count instead.")
+                        chart_df = chart_df.groupby(x_col)[y_col].count().reset_index()
+                        aggregation_method = "count"
+                        
+                elif aggregation_method == "count":
+                    chart_df = chart_df.groupby(x_col)[y_col].count().reset_index()
+                    
+                elif aggregation_method == "max":
+                    if pd.api.types.is_numeric_dtype(chart_df[y_col]):
+                        chart_df = chart_df.groupby(x_col)[y_col].max().reset_index()
+                    else:
+                        # For non-numeric, get the lexicographically maximum value
+                        chart_df = chart_df.groupby(x_col)[y_col].max().reset_index()
+                        
+                elif aggregation_method == "min":
+                    if pd.api.types.is_numeric_dtype(chart_df[y_col]):
+                        chart_df = chart_df.groupby(x_col)[y_col].min().reset_index()
+                    else:
+                        # For non-numeric, get the lexicographically minimum value
+                        chart_df = chart_df.groupby(x_col)[y_col].min().reset_index()
+            
+            # Limit chart data points for performance (after aggregation)
+            chart_limited = False
+            if len(chart_df) > 100:
+                chart_df = chart_df.head(100)
+                chart_limited = True
+            
+            # Sort by x-axis for better visualization
+            try:
+                if pd.api.types.is_numeric_dtype(chart_df[x_col]):
+                    chart_df = chart_df.sort_values(x_col)
+                elif pd.api.types.is_datetime64_any_dtype(chart_df[x_col]):
+                    chart_df = chart_df.sort_values(x_col)
+            except:
+                pass  # If sorting fails, continue with unsorted data
+            
+            # Display the chart
+            chart_data_for_display = chart_df.set_index(x_col)[y_col]
+            
+            if chart_type == "Line Chart 📈":
+                st.line_chart(chart_data_for_display, height=400)
+            elif chart_type == "Bar Chart 📊":
+                st.bar_chart(chart_data_for_display, height=400)
+            
+            # Display informative caption
+            caption_parts = []
+            
+            if aggregation_applied:
+                caption_parts.append(f"**{aggregation_method.title()}** of {y_col} grouped by {x_col}")
+                caption_parts.append(f"({original_rows} rows → {len(chart_df)} groups)")
+            else:
+                caption_parts.append(f"{y_col} vs {x_col} (no aggregation needed)")
+            
+            if chart_limited:
+                caption_parts.append("(Limited to first 100 points)")
+            
+            st.caption("📊 " + " • ".join(caption_parts))
+            
+            # Show aggregation statistics if applied
+            if aggregation_applied:
+                with st.expander("📊 Aggregation Details", expanded=False):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Original Rows", f"{original_rows:,}")
+                    with col2:
+                        st.metric("After Grouping", f"{len(chart_df):,}")
+                    with col3:
+                        reduction = (1 - len(chart_df)/original_rows) * 100
+                        st.metric("Data Reduction", f"{reduction:.1f}%")
+                    
+                    # Show sample of aggregated data
+                    st.subheader("Sample of Aggregated Data:")
+                    st.dataframe(chart_df.head(10), use_container_width=True)
+                    
+        except Exception as e:
+            st.error(f"Error creating chart: {str(e)}")
+            st.write("Please try selecting different columns or check your data format.")
+            st.write("**Debug Info:**")
+            st.write(f"- Selected columns: {x_col}, {y_col}")
+            st.write(f"- Data types: {df[x_col].dtype}, {df[y_col].dtype}")
+            st.write(f"- Data shape: {df.shape}")
+
 
 
 if __name__ == "__main__":
