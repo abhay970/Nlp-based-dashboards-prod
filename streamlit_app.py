@@ -307,13 +307,16 @@ def main():
 
 
 def reset_session_state():
-    """Reset important session state elements."""
+    """Reset important session state elements but preserve default settings."""
     st.session_state.messages = []
     st.session_state.active_suggestion = None
     st.session_state.warnings = []
     st.session_state.query_results_cache = {}  # Cache for query results
-    st.session_state.current_page = {}  # Current page for each query
-    st.session_state.total_records = {}  # Total records for each query
+    # Clear all pagination states so new queries use current default
+    keys_to_remove = [key for key in st.session_state.keys() if key.startswith(('current_page_', 'page_size_', 'total_records_'))]
+    for key in keys_to_remove:
+        del st.session_state[key]
+    # Keep default_page_size and page_size_setting
     if "initial_question_asked" in st.session_state:
         del st.session_state.initial_question_asked
 
@@ -347,12 +350,23 @@ def show_header_and_sidebar():
     # Sidebar with pagination settings
     with st.sidebar:
         st.subheader("Pagination Settings")
-        st.selectbox(
+        
+        # Get current default page size or set initial value
+        current_default = st.session_state.get('default_page_size', 100)
+        
+        default_page_size = st.selectbox(
             "Default Page Size:",
             options=[25, 50, 100, 200, 500, 1000],
-            index=2,  # Default to 100
-            key="page_size_setting"
+            index=[25, 50, 100, 200, 500, 1000].index(current_default) if current_default in [25, 50, 100, 200, 500, 1000] else 2,
+            key="page_size_setting",
+            help="This will be the default page size for new queries"
         )
+        
+        # Store the default page size in session state
+        if default_page_size != st.session_state.get('default_page_size'):
+            st.session_state['default_page_size'] = default_page_size
+            # Show info message when changed
+            st.info(f"✅ Default page size updated to {default_page_size}. This will apply to new queries.")
         
         st.divider()
         if st.button("Clear Chat History", use_container_width=True):
@@ -664,17 +678,21 @@ def display_sql_confidence(confidence: dict):
     # If needed later, you can restore the st.popover block
 
 
+
 def display_sql_query(sql: str, message_index: int, confidence: dict):
     """
     Display SQL query and execute it with properly working pagination.
-    FIXED: Proper pagination state management and data display.
+    FIXED: Now properly uses sidebar default page size setting.
     """
     current_data_source = st.session_state.selected_yaml
     query_key = f"query_{message_index}_{hash(sql)}"
     
-    # Initialize pagination state if not exists
+    # Get the default page size from sidebar setting
+    default_page_size = st.session_state.get('default_page_size', st.session_state.get('page_size_setting', DEFAULT_PAGE_SIZE))
+    
+    # Initialize pagination state if not exists - use sidebar default
     if f"page_size_{query_key}" not in st.session_state:
-        st.session_state[f"page_size_{query_key}"] = st.session_state.get('page_size_setting', DEFAULT_PAGE_SIZE)
+        st.session_state[f"page_size_{query_key}"] = default_page_size
     
     if f"current_page_{query_key}" not in st.session_state:
         st.session_state[f"current_page_{query_key}"] = 1
@@ -710,12 +728,13 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
             current_page = st.session_state[f"current_page_{query_key}"]
             current_page_size = st.session_state[f"page_size_{query_key}"]
             
-            # Determine if pagination is needed
+            # Show current settings info
+            st.info(f"📊 **Dataset** - {total_records:,} records found. Page size: {current_page_size} (from {'sidebar default' if current_page_size == default_page_size else 'custom setting'})")
+            
+            # Determine if pagination is needed (show pagination for more than 25 records)
             needs_pagination = total_records > 25
             
             if needs_pagination:
-                st.info(f"📊 **Dataset** - {total_records:,} records found. Using pagination for optimal performance.")
-                
                 # Display pagination controls (this handles all state updates internally)
                 updated_page = display_pagination_controls(query_key, total_records, current_page_size, current_page)
                 
@@ -730,7 +749,7 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                 
             else:
                 df_to_display = df_full
-                st.success(f"✅ **Complete Dataset** - Showing all {total_records:,} records")
+                st.success(f"✅ **Complete Dataset** - Showing all {total_records:,} records (no pagination needed)")
             
             # Display results in tabs
             data_tab, chart_tab = st.tabs(["📄 Data", "📈 Chart"])
@@ -777,6 +796,9 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                 
                 if needs_pagination:
                     st.caption("📊 Chart shows data from current page only")
+
+
+
 def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
     """
     Display charts tab with real-time aggregation updates.
