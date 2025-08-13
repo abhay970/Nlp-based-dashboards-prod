@@ -6,7 +6,6 @@ Uses stored procedures instead of direct API calls.
 OPTIMIZED VERSION FOR FASTER RESPONSE TIMES
 All data sources now use the unified Dremio procedure.
 ENHANCED: Added timestamp conversion for Salesforce date fields
-FIXED: Corrected data retrieval error handling
 """
 import json
 import time
@@ -374,13 +373,12 @@ def display_message(content: List[Dict[str, Union[str, Dict]]], message_index: i
 
 def modify_salesforce_query(sql: str) -> str:
     """
-    Optimize SQL queries by removing 'public' schema from salesforceDb references
-    and fixing CTE references that incorrectly include database prefixes.
-    ENHANCED: Fixed CTE reference issues and case sensitivity problems.
+    Optimize SQL queries by removing 'public' schema from salesforceDb references.
+    OPTIMIZED: More efficient regex processing.
     """
     import re
     
-    # Step 1: Remove 'public' schema from salesforceDb references
+    # Single pass with multiple patterns
     patterns = [
         (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.("[pP][uU][bB][lL][iI][cC]")\.', r'\1.'),
         (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.([pP][uU][bB][lL][iI][cC])\.', r'\1.'),
@@ -391,41 +389,6 @@ def modify_salesforce_query(sql: str) -> str:
     for pattern, replacement in patterns:
         sql = re.sub(pattern, replacement, sql)
     
-    # Step 2: Fix CTE references that incorrectly include database prefixes
-    # Find all CTE definitions (WITH clause table names)
-    cte_pattern = r'WITH\s+(\w+)\s+AS\s*\('
-    cte_matches = re.findall(cte_pattern, sql, re.IGNORECASE)
-    
-    # For each CTE found, fix incorrect database.cte_name references
-    for cte_name in cte_matches:
-        # Pattern to match salesforceDb.cte_name or "salesforceDb".cte_name
-        incorrect_patterns = [
-            (rf'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.{re.escape(cte_name)}\b', cte_name),
-            (rf'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.{re.escape(cte_name)}\b', cte_name),
-            # Handle case variations
-            (rf'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\._{re.escape(cte_name[1:]) if cte_name.startswith("_") else re.escape("_" + cte_name)}\b', cte_name),
-            (rf'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\._{re.escape(cte_name[1:]) if cte_name.startswith("_") else re.escape("_" + cte_name)}\b', cte_name)
-        ]
-        
-        for pattern, replacement in incorrect_patterns:
-            sql = re.sub(pattern, replacement, sql)
-    
-    # Step 3: Handle specific common CTE patterns
-    # Fix __contact, __account, etc. references
-    common_cte_fixes = [
-        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.__contact\b', '__contact'),
-        (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.__contact\b', '__contact'),
-        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.__account\b', '__account'),
-        (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.__account\b', '__account'),
-        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.__opportunity\b', '__opportunity'),
-        (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.__opportunity\b', '__opportunity'),
-        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.__lead\b', '__lead'),
-        (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.__lead\b', '__lead')
-    ]
-    
-    for pattern, replacement in common_cte_fixes:
-        sql = re.sub(pattern, replacement, sql)
-    
     return sql
 
 
@@ -433,7 +396,7 @@ def modify_salesforce_query(sql: str) -> str:
 def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
     Execute data procedure with caching and optimized error handling.
-    FIXED: Removed overly strict error detection that was causing false positives.
+    ENHANCED: Better error handling for user-friendly messages.
     """
     try:
         # All data sources use the same unified Dremio procedure
@@ -453,26 +416,29 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
         # Convert to pandas DataFrame
         df = result.to_pandas()
         
-        # Basic validation - check if result is None or not a DataFrame
+        # Check if df is None or empty
         if df is None:
-            return None, "⚠️ No data returned from the procedure."
+            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
         
-        if not isinstance(df, pd.DataFrame):
-            return None, "⚠️ Invalid data format returned."
+        # Check if the result is actually an error message (string) instead of DataFrame
+        if isinstance(df, str):
+            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
         
         # Check if DataFrame is empty
         if df.empty:
             return None, "📭 No records found for your query. Please try with different criteria."
         
-        # Only check for actual error responses from the procedure
-        # Look for specific error patterns that indicate real database/procedure errors
-        if len(df.columns) == 1:
-            # If single column, check if it contains error messages
-            col_name = df.columns[0].upper()
-            if 'ERROR' in col_name or 'EXCEPTION' in col_name:
-                first_value = str(df.iloc[0, 0]).lower()
-                if 'error' in first_value or 'exception' in first_value or 'failed' in first_value:
-                    return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+        # Check for error columns in the DataFrame (like ERROR, RECEIVED_TYPE, DATA columns in your image)
+        if 'ERROR' in df.columns or 'RECEIVED_TYPE' in df.columns:
+            # This means the procedure returned an error in DataFrame format
+            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+        
+        # Check if the DataFrame contains error-like data
+        if len(df.columns) >= 3 and any(col.upper() in ['ERROR', 'RECEIVED_TYPE', 'DATA'] for col in df.columns):
+            # Check if the first row contains error information
+            first_row = df.iloc[0] if len(df) > 0 else None
+            if first_row is not None and any(str(val).lower().startswith('error') for val in first_row.values):
+                return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
         
         # Convert timestamps for Salesforce data
         if data_source == "Salesforce" and df is not None and not df.empty:
@@ -486,26 +452,51 @@ def execute_data_procedure(query: str, data_source: str) -> Tuple[Optional[pd.Da
     except SnowparkSQLException as e:
         error_str = str(e).lower()
         
-        # Enhanced error pattern matching for actual SQL/database errors
+        # Enhanced error pattern matching
         if any(pattern in error_str for pattern in [
             "syntax error", 
-            "does not exist",
-            "access denied",
-            "insufficient privileges",
+            "unexpected 'month'", 
+            "unexpected 'year'",
+            "unexpected 'day'",
+            "invalid date",
+            "data not available",
+            "unexpected data format",
+            "no data found",
+            "empty result",
             "connection error",
-            "timeout",
-            "procedure not found",
-            "invalid procedure"
+            "timeout"
         ]):
             return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+        elif "does not exist" in error_str:
+            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+        elif "access denied" in error_str or "insufficient privileges" in error_str:
+            return None, "⚠️ Data is not available right now. Please contact your administrator for access."
         else:
-            # For other SQL errors, show a generic message
-            return None, "⚠️ There was an issue executing your query. Please try again or contact your administrator."
+            return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
             
     except Exception as e:
-        # Log the actual error for debugging (you can remove this in production)
-        print(f"Debug - Unexpected error in execute_data_procedure: {str(e)}")
-        return None, "⚠️ An unexpected error occurred. Please try again later or contact your administrator."
+        # Catch all other exceptions and return user-friendly message
+        return None, "⚠️ Data is not available right now. Please try again later or contact your administrator."
+
+# def display_sql_confidence(confidence: dict):
+#     """Display SQL confidence information."""
+#     if confidence is None:
+#         return
+        
+#     verified_query_used = confidence.get("verified_query_used")
+#     with st.popover("🔍 Verified Query Info", help="Query verification details"):
+#         if verified_query_used is None:
+#             return
+            
+#         st.write(f"**Name:** {verified_query_used.get('name', 'N/A')}")
+#         st.write(f"**Question:** {verified_query_used.get('question', 'N/A')}")
+#         st.write(f"**Verified by:** {verified_query_used.get('verified_by', 'N/A')}")
+        
+#         if 'verified_at' in verified_query_used:
+#             st.write(f"**Verified at:** {datetime.fromtimestamp(verified_query_used['verified_at'])}")
+        
+#         with st.expander("SQL Query"):
+#             st.code(verified_query_used.get("sql", "N/A"), language="sql")
 
 def display_sql_confidence(confidence: dict):
     """Display SQL confidence information."""
@@ -522,7 +513,7 @@ def display_sql_confidence(confidence: dict):
 def display_sql_query(sql: str, message_index: int, confidence: dict):
     """
     Display SQL query and execute it via appropriate data procedure.
-    ENHANCED: Better error handling for user-friendly messages.
+    ENHANCED: Now shows SQL query with better formatting and error handling.
     """
     current_data_source = st.session_state.selected_yaml
     
@@ -536,6 +527,20 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
 
     # Display confidence info if available
     display_sql_confidence(confidence)
+
+    # === NEW: Display the SQL Query ===
+    with st.expander("🔍 SQL Query", expanded=False):
+        st.code(sql, language="sql")
+        
+        # Show if query was modified
+        if query_was_modified:
+            st.info("ℹ️ Query was optimized for Salesforce data source")
+            with st.expander("Modified Query", expanded=False):
+                st.code(modified_sql, language="sql")
+        
+        # Add copy button functionality
+        st.markdown("📋 **Copy SQL:**")
+        st.code(f"```sql\n{sql}\n```", language="markdown")
 
     # Execute and display results
     with st.expander("📊 Results", expanded=True):
@@ -556,6 +561,11 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                 Try adjusting your filters or time period.
                 """)
             else:
+                # Additional check to make sure df is actually a DataFrame
+                if not isinstance(df, pd.DataFrame):
+                    st.warning("⚠️ Data is not available right now. Please try again later or contact your administrator.")
+                    return
+                
                 # Display results in tabs
                 data_tab, chart_tab = st.tabs(["📄 Data", "📈 Chart"])
                 
@@ -564,7 +574,7 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                         st.dataframe(df, use_container_width=True)
                         st.caption(f"📊 {len(df)} rows returned")
                     except Exception as display_error:
-                        st.warning("⚠️ Unable to display data. Please try again later.")
+                        st.warning("⚠️ Data is not available right now. Please try again later or contact your administrator.")
                         return
 
                 with chart_tab:
@@ -572,6 +582,8 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
                         display_charts_tab(df, message_index)
                     except Exception as chart_error:
                         st.warning("⚠️ Chart display is not available right now. Please try again later.")
+
+
 
 def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
     """
