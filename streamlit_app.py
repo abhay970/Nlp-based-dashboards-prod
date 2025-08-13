@@ -373,20 +373,43 @@ def display_message(content: List[Dict[str, Union[str, Dict]]], message_index: i
 
 def modify_salesforce_query(sql: str) -> str:
     """
-    Optimize SQL queries by removing 'public' schema from salesforceDb references.
-    OPTIMIZED: More efficient regex processing.
+    Optimize SQL queries by removing 'public' schema from salesforceDb references
+    and removing database name from CTE alias references.
+    ENHANCED: Now handles CTE alias references with database names.
     """
     import re
     
-    # Single pass with multiple patterns
-    patterns = [
+    # First pass: Remove public schema references (existing patterns)
+    schema_patterns = [
         (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.("[pP][uU][bB][lL][iI][cC]")\.', r'\1.'),
         (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.([pP][uU][bB][lL][iI][cC])\.', r'\1.'),
         (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.([pP][uU][bB][lL][iI][cC])\.', r'\1.'),
         (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.("[pP][uU][bB][lL][iI][cC]")\.', r'\1.')
     ]
     
-    for pattern, replacement in patterns:
+    for pattern, replacement in schema_patterns:
+        sql = re.sub(pattern, replacement, sql)
+    
+    # Second pass: Remove database name from CTE alias references
+    # This handles cases like: FROM salesforceDb.__contact AS c -> FROM __contact AS c
+    # Pattern explanation:
+    # - \b = word boundary
+    # - ([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]) = case-insensitive "salesforcedb"
+    # - \. = literal dot
+    # - (__\w+) = captures CTE names starting with double underscore followed by word characters
+    # - (?=\s+AS\s+\w+|\s*$|\s+[^.]) = positive lookahead to ensure we're at end of table reference
+    
+    cte_patterns = [
+        # Handle: salesforceDb.__tablename AS alias
+        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.(__\w+)(?=\s+AS\s+\w+)', r'\2'),
+        # Handle: salesforceDb.__tablename (without AS clause)
+        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.(__\w+)(?=\s*$|\s+(?!\.)\w)', r'\2'),
+        # Handle quoted database names: "salesforceDb".__tablename
+        (r'"([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])"\.(__\w+)(?=\s+AS\s+\w+)', r'\2'),
+        (r'"([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])"\.(__\w+)(?=\s*$|\s+(?!\.)\w)', r'\2'),
+    ]
+    
+    for pattern, replacement in cte_patterns:
         sql = re.sub(pattern, replacement, sql)
     
     return sql
