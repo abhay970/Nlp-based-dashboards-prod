@@ -1,5 +1,5 @@
 """
-Cortex Analyst App - SAP HANA Configuration with Salesforce Dremio Integration 
+Cortex Analyst App - SAP HANA Configuration with Salesforce Dremio Integration
 ============================================================================
 This app allows users to interact with their data using natural language.
 Uses stored procedures instead of direct API calls.
