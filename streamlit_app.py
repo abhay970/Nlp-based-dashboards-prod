@@ -374,12 +374,13 @@ def display_message(content: List[Dict[str, Union[str, Dict]]], message_index: i
 
 def modify_salesforce_query(sql: str) -> str:
     """
-    Optimize SQL queries by removing 'public' schema from salesforceDb references.
-    OPTIMIZED: More efficient regex processing.
+    Optimize SQL queries by removing 'public' schema from salesforceDb references
+    and fixing CTE references that incorrectly include database prefixes.
+    ENHANCED: Fixed CTE reference issues and case sensitivity problems.
     """
     import re
     
-    # Single pass with multiple patterns
+    # Step 1: Remove 'public' schema from salesforceDb references
     patterns = [
         (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.("[pP][uU][bB][lL][iI][cC]")\.', r'\1.'),
         (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.([pP][uU][bB][lL][iI][cC])\.', r'\1.'),
@@ -388,6 +389,41 @@ def modify_salesforce_query(sql: str) -> str:
     ]
     
     for pattern, replacement in patterns:
+        sql = re.sub(pattern, replacement, sql)
+    
+    # Step 2: Fix CTE references that incorrectly include database prefixes
+    # Find all CTE definitions (WITH clause table names)
+    cte_pattern = r'WITH\s+(\w+)\s+AS\s*\('
+    cte_matches = re.findall(cte_pattern, sql, re.IGNORECASE)
+    
+    # For each CTE found, fix incorrect database.cte_name references
+    for cte_name in cte_matches:
+        # Pattern to match salesforceDb.cte_name or "salesforceDb".cte_name
+        incorrect_patterns = [
+            (rf'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.{re.escape(cte_name)}\b', cte_name),
+            (rf'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.{re.escape(cte_name)}\b', cte_name),
+            # Handle case variations
+            (rf'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\._{re.escape(cte_name[1:]) if cte_name.startswith("_") else re.escape("_" + cte_name)}\b', cte_name),
+            (rf'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\._{re.escape(cte_name[1:]) if cte_name.startswith("_") else re.escape("_" + cte_name)}\b', cte_name)
+        ]
+        
+        for pattern, replacement in incorrect_patterns:
+            sql = re.sub(pattern, replacement, sql)
+    
+    # Step 3: Handle specific common CTE patterns
+    # Fix __contact, __account, etc. references
+    common_cte_fixes = [
+        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.__contact\b', '__contact'),
+        (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.__contact\b', '__contact'),
+        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.__account\b', '__account'),
+        (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.__account\b', '__account'),
+        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.__opportunity\b', '__opportunity'),
+        (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.__opportunity\b', '__opportunity'),
+        (r'\b([sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB])\.__lead\b', '__lead'),
+        (r'("[sS][aA][lL][eE][sS][fF][oO][rR][cC][eE][dD][bB]")\.__lead\b', '__lead')
+    ]
+    
+    for pattern, replacement in common_cte_fixes:
         sql = re.sub(pattern, replacement, sql)
     
     return sql
