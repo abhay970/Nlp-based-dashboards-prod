@@ -156,8 +156,7 @@ def split_dataframe(input_df: pd.DataFrame, rows: int) -> List[pd.DataFrame]:
 
 def display_pagination_controls(query_key: str, total_records: int, page_size: int, current_page: int):
     """
-    Display improved pagination controls with proper state updates.
-    FIXED: Proper state management and immediate updates.
+    Display simplified pagination controls.
     """
     total_pages = math.ceil(total_records / page_size) if total_records > 0 else 1
     
@@ -168,36 +167,29 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
     state_changed = False
     new_page = current_page
     
-    # Create a well-designed pagination container
+    # Create a simplified pagination container
     with st.container():
-        # Info section with better formatting
-        info_col, settings_col = st.columns([3, 1])
+        # Basic info section
+        st.markdown(f"""
+        **📊 Results Overview**  
+        Showing Page **{current_page}** of **{total_pages}**
+        """)
         
-        with info_col:
-            start_record = (current_page - 1) * page_size + 1
-            end_record = min(current_page * page_size, total_records)
-            st.markdown(f"""
-            **📊 Results Overview**  
-            Showing **{start_record:,} - {end_record:,}** of **{total_records:,}** records  
-            Page **{current_page}** of **{total_pages}**
-            """)
+        # Page size selector
+        current_page_size = st.session_state.get(f"page_size_{query_key}", page_size)
+        new_page_size = st.selectbox(
+            "📄 Per Page", 
+            options=[25, 50, 100, 200, 500, 1000],
+            index=[25, 50, 100, 200, 500, 1000].index(current_page_size) if current_page_size in [25, 50, 100, 200, 500, 1000] else 2,
+            key=f"page_size_selector_{query_key}",
+            help="Number of records to show per page"
+        )
         
-        with settings_col:
-            # Page size selector with immediate effect
-            current_page_size = st.session_state.get(f"page_size_{query_key}", page_size)
-            new_page_size = st.selectbox(
-                "📄 Per Page", 
-                options=[25, 50, 100, 200, 500, 1000],
-                index=[25, 50, 100, 200, 500, 1000].index(current_page_size) if current_page_size in [25, 50, 100, 200, 500, 1000] else 2,
-                key=f"page_size_selector_{query_key}",
-                help="Number of records to show per page"
-            )
-            
-            # Handle page size change
-            if new_page_size != current_page_size:
-                st.session_state[f"page_size_{query_key}"] = new_page_size
-                st.session_state[f"current_page_{query_key}"] = 1  # Reset to first page
-                st.rerun()
+        # Handle page size change
+        if new_page_size != current_page_size:
+            st.session_state[f"page_size_{query_key}"] = new_page_size
+            st.session_state[f"current_page_{query_key}"] = 1  # Reset to first page
+            st.rerun()
         
         st.divider()
         
@@ -245,40 +237,6 @@ def display_pagination_controls(query_key: str, total_records: int, page_size: i
         # Progress bar
         progress_value = current_page / total_pages
         st.progress(progress_value, text=f"Page {current_page} of {total_pages}")
-        
-        # Quick page jumps for large datasets
-        if total_pages > 10:
-            st.markdown("**Quick Jump:**")
-            quick_jump_cols = st.columns(min(5, total_pages))
-            
-            # Show strategic page numbers
-            quick_pages = []
-            if total_pages <= 5:
-                quick_pages = list(range(1, total_pages + 1))
-            else:
-                quick_pages = [1]
-                if total_pages > 20:
-                    step = max(1, total_pages // 4)
-                    quick_pages.extend([step, step * 2, step * 3])
-                elif total_pages > 10:
-                    mid = total_pages // 2
-                    quick_pages.extend([max(1, mid - 1), mid, min(total_pages, mid + 1)])
-                quick_pages.append(total_pages)
-                quick_pages = sorted(list(set(quick_pages)))
-            
-            for i, page_num in enumerate(quick_pages[:5]):
-                if i < len(quick_jump_cols):
-                    with quick_jump_cols[i]:
-                        is_current = page_num == current_page
-                        button_label = f"{'📍 ' if is_current else ''}{page_num}"
-                        if st.button(
-                            button_label, 
-                            key=f"quick_{query_key}_{page_num}",
-                            disabled=is_current,
-                            help=f"Jump to page {page_num}"
-                        ):
-                            new_page = page_num
-                            state_changed = True
     
     # Update state if changed
     if state_changed and new_page != current_page:
@@ -752,8 +710,7 @@ def display_sql_confidence(confidence: dict):
 
 def display_sql_query(sql: str, message_index: int, confidence: dict):
     """
-    Display SQL query and execute it with properly working pagination.
-    FIXED: Page size selection now works correctly.
+    Display SQL query and execute it with simplified pagination.
     """
     current_data_source = st.session_state.selected_yaml
     query_key = f"query_{message_index}_{hash(sql)}"
@@ -807,9 +764,6 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
             current_page = st.session_state[f"current_page_{query_key}"]
             current_page_size = st.session_state[f"page_size_{query_key}"]
             
-            # Show current settings info
-            st.info(f"📊 **Dataset** - {total_records:,} records found. Page size: {current_page_size} (from {'sidebar default' if current_page_size == default_page_size else 'custom setting'})")
-            
             if needs_pagination:
                 # Calculate data slice using the CURRENT page size (which may have been updated)
                 start_idx = (current_page - 1) * current_page_size
@@ -824,31 +778,12 @@ def display_sql_query(sql: str, message_index: int, confidence: dict):
             data_tab, chart_tab = st.tabs(["📄 Data", "📈 Chart"])
             
             with data_tab:
-                # Export options
-                if needs_pagination:
-                    export_col1, export_col2 = st.columns([3, 1])
-                    with export_col2:
-                        csv = df_to_display.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Download Current Page CSV",
-                            data=csv,
-                            file_name=f"data_page_{current_page}.csv",
-                            mime="text/csv",
-                            key=f"csv_download_{query_key}"
-                        )
-                
                 # Display data
                 st.dataframe(df_to_display, use_container_width=True, height=400)
                 
-                # Status information
+                # Simple status information
                 if needs_pagination:
-                    status_col1, status_col2, status_col3 = st.columns(3)
-                    with status_col1:
-                        st.metric("📄 Current Page", f"{current_page:,}")
-                    with status_col2:
-                        st.metric("📊 Records Shown", f"{len(df_to_display):,}")
-                    with status_col3:
-                        st.metric("🗂️ Total Records", f"{total_records:,}")
+                    st.caption(f"📊 Showing page {current_page} of {math.ceil(total_records / current_page_size)} pages")
                 else:
                     st.caption(f"📊 {len(df_to_display)} rows returned")
 
@@ -1021,7 +956,6 @@ def display_charts_tab(df: pd.DataFrame, message_index: int) -> None:
             st.write(f"- Selected columns: {x_col}, {y_col}")
             st.write(f"- Data types: {df[x_col].dtype}, {df[y_col].dtype}")
             st.write(f"- Data shape: {df.shape}")
-
 
 
 if __name__ == "__main__":
